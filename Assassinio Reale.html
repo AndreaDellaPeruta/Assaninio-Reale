@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<!-- saved from url=(0065)file:///C:/Users/Utente/Downloads/simplified-game-code%20(1).html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+    <title>Assassinio Reale</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            flex-direction: column;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #000;
+            cursor: crosshair;
+        }
+        .instructions {
+            margin-top: 20px;
+            max-width: 800px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="900" height="700"></canvas>
+    <div class="instructions">
+        <h3>Istruzioni:</h3>
+        <p>Muoviti con WASD o frecce direzionali. Mira con il mouse. Spara frecce con la barra spaziale. Elimina re/regina con E quando sei vicino. Dopo averli eliminati, fuggi dall'uscita segreta!</p>
+    </div>
+
+    <script>
+        // Setup canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 900;
+        canvas.height = 700;
+
+        // Game state
+        let player, king, queen, walls, doors, guards, exitZone, escapeZone;
+        let gameOver = false;
+        let gameWon = false;
+        let keys = {};
+        let mouseX = 0, mouseY = 0;
+        
+        // Helper Functions
+        function dist(x1, y1, x2, y2) {
+            return Math.hypot(x2 - x1, y2 - y1);
+        }
+        
+        function checkCollision(x, y, size, objects) {
+            return objects.some(obj => 
+                x + size/2 > obj.x && 
+                x - size/2 < obj.x + obj.width && 
+                y + size/2 > obj.y && 
+                y - size/2 < obj.y + obj.height
+            );
+        }
+        
+        function lineIntersectsRect(x1, y1, x2, y2, rect) {
+            const lines = [
+                {x1: rect.x, y1: rect.y, x2: rect.x + rect.width, y2: rect.y},
+                {x1: rect.x + rect.width, y1: rect.y, x2: rect.x + rect.width, y2: rect.y + rect.height},
+                {x1: rect.x + rect.width, y1: rect.y + rect.height, x2: rect.x, y2: rect.y + rect.height},
+                {x1: rect.x, y1: rect.y + rect.height, x2: rect.x, y2: rect.y}
+            ];
+            
+            for (const line of lines) {
+                const det = (x2 - x1) * (line.y2 - line.y1) - (line.x2 - line.x1) * (y2 - y1);
+                if (det === 0) continue;
+                
+                const lambda = ((line.y2 - line.y1) * (line.x2 - x1) + (line.x1 - line.x2) * (line.y2 - y1)) / det;
+                const gamma = ((y1 - y2) * (line.x2 - x1) + (x2 - x1) * (line.y2 - y1)) / det;
+                
+                if (0 <= lambda && lambda <= 1 && 0 <= gamma && gamma <= 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Character class
+        class Character {
+            constructor(x, y, size, color, speed = 0, type = 'static', patrolPoints = [], viewDistance = 100) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.color = color;
+                this.alive = true;
+                this.speed = speed;
+                this.type = type;
+                this.patrolPoints = patrolPoints;
+                this.currentPatrolIndex = 0;
+                this.viewDistance = viewDistance;
+                this.direction = 0;
+            }
+
+            draw() {
+                if (!this.alive) return;
+                
+                // Draw field of view for guards
+                if (this.type === 'guard') {
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y);
+                    ctx.arc(this.x, this.y, this.viewDistance, this.direction - Math.PI/4, this.direction + Math.PI/4);
+                    ctx.lineTo(this.x, this.y);
+                    ctx.fillStyle = 'rgba(255, 255, 0, 0.2)';
+                    ctx.fill();
+                }
+                
+                // Draw character
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x - this.size/2, this.y - this.size/2, this.size, this.size);
+                
+                // Draw crown for royalty
+                if (this.type === 'king' || this.type === 'queen') {
+                    ctx.fillStyle = 'gold';
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - this.size/2, this.y - this.size/2);
+                    ctx.lineTo(this.x, this.y - this.size);
+                    ctx.lineTo(this.x + this.size/2, this.y - this.size/2);
+                    ctx.fill();
+                }
+            }
+
+            update() {
+                if (!this.alive || this.speed === 0 || this.patrolPoints.length === 0) return;
+                
+                const target = this.patrolPoints[this.currentPatrolIndex];
+                const distance = dist(this.x, this.y, target.x, target.y);
+                
+                this.direction = Math.atan2(target.y - this.y, target.x - this.x);
+                
+                // If reached point, move to next
+                if (distance < this.speed) {
+                    this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolPoints.length;
+                    return;
+                }
+                
+                // Move toward current point
+                const dirX = (target.x - this.x) / distance;
+                const dirY = (target.y - this.y) / distance;
+                
+                this.x += dirX * this.speed;
+                this.y += dirY * this.speed;
+            }
+
+            canSee(character) {
+                if (!this.alive) return false;
+                
+                const distance = dist(this.x, this.y, character.x, character.y);
+                const angle = Math.atan2(character.y - this.y, character.x - this.x);
+                
+                // Check distance and angle
+                const angleDiff = Math.abs(((angle - this.direction + Math.PI*3) % (Math.PI*2)) - Math.PI);
+                if (distance > this.viewDistance || angleDiff > Math.PI/4) return false;
+                
+                // Check wall line of sight
+                for (const wall of walls) {
+                    if (lineIntersectsRect(this.x, this.y, character.x, character.y, wall)) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            }
+        }
+
+        // Player class
+        class Player extends Character {
+            constructor(x, y) {
+                super(x, y, 20, 'blue', 5);
+                this.arrows = 5;
+                this.suspicionLevel = 0;
+                this.health = 100;
+                this.escaped = false;
+                this.facingDirection = 0;
+                this.isBehindWall = false;
+                this.arrowCooldown = 0;
+            }
+
+            draw() {
+                // Draw player circle
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size/2, 0, Math.PI*2);
+                ctx.fill();
+                
+                // Direction indicator
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(
+                    this.x + Math.cos(this.facingDirection) * this.size/2,
+                    this.y + Math.sin(this.facingDirection) * this.size/2
+                );
+                ctx.strokeStyle = 'blue';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Draw aim line
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(mouseX, mouseY);
+                ctx.strokeStyle = 'rgba(0, 0, 255, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                
+                // Draw aim point
+                ctx.beginPath();
+                ctx.arc(mouseX, mouseY, 3, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+                ctx.fill();
+            }
+
+            move(dx, dy) {
+                // Update direction based on mouse
+                this.facingDirection = Math.atan2(mouseY - this.y, mouseX - this.x);
+                
+                if (this.arrowCooldown > 0) this.arrowCooldown--;
+                
+                const potentialX = this.x + dx * this.speed;
+                const potentialY = this.y + dy * this.speed;
+                
+                // Check for valid move
+                const canPassDoor = checkCollision(potentialX, potentialY, this.size, doors);
+                
+                if ((canPassDoor || !checkCollision(potentialX, potentialY, this.size, walls)) &&
+                    potentialX > this.size/2 && potentialX < canvas.width - this.size/2 &&
+                    potentialY > this.size/2 && potentialY < canvas.height - this.size/2) {
+                    this.x = potentialX;
+                    this.y = potentialY;
+                }
+                
+                // Check if behind wall (for suspicion reduction)
+                this.isBehindWall = guards.some(guard => {
+                    if (!guard.alive) return false;
+                    return walls.some(wall => 
+                        lineIntersectsRect(this.x, this.y, guard.x, guard.y, wall)
+                    );
+                });
+            }
+
+            shootArrow() {
+                if (this.arrows <= 0 || this.arrowCooldown > 0) return false;
+                
+                this.arrows--;
+                this.suspicionLevel += 5;
+                this.arrowCooldown = 15;
+                
+                const dirX = Math.cos(this.facingDirection);
+                const dirY = Math.sin(this.facingDirection);
+                
+                // Simulate arrow path
+                let arrowX = this.x;
+                let arrowY = this.y;
+                const maxDistance = 300;
+                
+                for (let i = 0; i < 20; i++) {
+                    arrowX += dirX * (maxDistance/20);
+                    arrowY += dirY * (maxDistance/20);
+                    
+                    // Check if hits a guard
+                    for (const guard of guards) {
+                        if (guard.alive && dist(arrowX, arrowY, guard.x, guard.y) < guard.size/2) {
+                            guard.alive = false;
+                            this.suspicionLevel += 20;
+                            return true;
+                        }
+                    }
+                    
+                    // Check wall collision
+                    if (checkCollision(arrowX, arrowY, 5, walls)) {
+                        break;
+                    }
+                }
+                
+                return false;
+            }
+            
+            canAssassinate(target) {
+                if (!target.alive) return false;
+                return dist(this.x, this.y, target.x, target.y) < 40;
+            }
+            
+            assassinate(target) {
+                if (this.canAssassinate(target)) {
+                    target.alive = false;
+                    this.suspicionLevel += 30;
+                    return true;
+                }
+                return false;
+            }
+            
+            updateSuspicion() {
+                // Check proximity to royalty
+                if (king.alive) {
+                    const kingDistance = dist(this.x, this.y, king.x, king.y);
+                    if (kingDistance < 100) {
+                        this.suspicionLevel += (100 - kingDistance) / 100 * 0.5;
+                    }
+                }
+                
+                if (queen.alive) {
+                    const queenDistance = dist(this.x, this.y, queen.x, queen.y);
+                    if (queenDistance < 100) {
+                        this.suspicionLevel += (100 - queenDistance) / 100 * 0.5;
+                    }
+                }
+                
+                // Reduce suspicion
+                if (this.isBehindWall && this.suspicionLevel > 0) {
+                    this.suspicionLevel -= 0.2; // Faster reduction when behind wall
+                } else if (this.suspicionLevel > 0) {
+                    this.suspicionLevel -= 0.05;
+                }
+                
+                // Cap suspicion
+                this.suspicionLevel = Math.max(0, Math.min(100, this.suspicionLevel));
+            }
+        }
+
+        // Wall and Door classes
+        class Rectangle {
+            constructor(x, y, width, height, color, name = '') {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+                this.name = name;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                if (this.name) {
+                    ctx.fillStyle = 'white';
+                    ctx.font = '12px Arial';
+                    ctx.fillText(this.name, this.x + 5, this.y + 15);
+                }
+            }
+        }
+
+        // Game initialization
+        function initGame() {
+            // Create walls
+            walls = [
+                // External walls - Top, Left, Bottom, Right
+                new Rectangle(0, 0, canvas.width, 10, '#333'),
+                new Rectangle(0, 0, 10, canvas.height, '#333'),
+                new Rectangle(0, canvas.height - 10, canvas.width, 10, '#333'),
+                new Rectangle(canvas.width - 10, 0, 10, canvas.height, '#333'),
+                
+                // Secret exit and main entrance
+                new Rectangle(250, 0, 70, 10, 'green', 'EXIT'),
+                new Rectangle(400, canvas.height - 10, 100, 10, '#654321', 'ENTRANCE'),
+                
+                // Outer walls
+                new Rectangle(100, 100, 170, 20, '#333'),
+                new Rectangle(320, 100, 260, 20, '#333'),
+                new Rectangle(630, 100, 170, 20, '#333'),
+                new Rectangle(100, 100, 20, 170, '#333'),
+                new Rectangle(100, 320, 20, 260, '#333'),
+                new Rectangle(780, 100, 20, 170, '#333'),
+                new Rectangle(780, 320, 20, 260, '#333'),
+                new Rectangle(100, 580, 170, 20, '#333'),
+                new Rectangle(320, 580, 260, 20, '#333'),
+                new Rectangle(630, 580, 170, 20, '#333'),
+                
+                // Queen's room (NW)
+                new Rectangle(120, 150, 180, 20, '#333'),
+                new Rectangle(120, 150, 20, 130, '#333'),
+                new Rectangle(120, 280, 180, 20, '#333'),
+                new Rectangle(300, 150, 20, 70, '#333'),
+                new Rectangle(300, 250, 20, 50, '#333'),
+                
+                // King's room (NE)
+                new Rectangle(600, 150, 180, 20, '#333'),
+                new Rectangle(600, 150, 20, 70, '#333'),
+                new Rectangle(600, 250, 20, 50, '#333'),
+                new Rectangle(780, 150, 20, 130, '#333'),
+                new Rectangle(600, 280, 180, 20, '#333'),
+                
+                // Throne, Kitchen, Armory
+                new Rectangle(350, 400, 200, 20, '#333'),
+                new Rectangle(350, 400, 20, 100, '#333'),
+                new Rectangle(550, 400, 20, 100, '#333'),
+                new Rectangle(180, 450, 100, 20, '#333'),
+                new Rectangle(180, 450, 20, 80, '#333'),
+                new Rectangle(620, 450, 100, 20, '#333'),
+                new Rectangle(700, 450, 20, 80, '#333')
+            ];
+            
+            // Create doors
+            doors = [
+                new Rectangle(430, canvas.height - 30, 40, 20, '#8B4513', "Entrata"),
+                new Rectangle(270, 100, 50, 20, '#8B4513', "Nord"),
+                new Rectangle(580, 100, 50, 20, '#8B4513', "Nord"),
+                new Rectangle(100, 270, 20, 50, '#8B4513', "Ovest"),
+                new Rectangle(100, 480, 20, 50, '#8B4513', "Ovest"),
+                new Rectangle(780, 270, 20, 50, '#8B4513', "Est"),
+                new Rectangle(780, 480, 20, 50, '#8B4513', "Est"),
+                new Rectangle(270, 580, 50, 20, '#8B4513', "Sud"),
+                new Rectangle(580, 580, 50, 20, '#8B4513', "Sud"),
+                new Rectangle(300, 220, 20, 30, '#8B4513', "Regina"),
+                new Rectangle(600, 220, 20, 30, '#8B4513', "Re"),
+                new Rectangle(450, 400, 100, 20, '#8B4513', "Trono"),
+                new Rectangle(280, 450, 50, 20, '#8B4513', "Cucine"),
+                new Rectangle(620, 450, 50, 20, '#8B4513', "Armeria")
+            ];
+            
+            // Create characters
+            player = new Player(450, 650);
+            king = new Character(700, 200, 30, 'purple', 0, 'king');
+            queen = new Character(200, 200, 30, 'pink', 0, 'queen');
+            
+            // Guard patrol paths
+            const guardPaths = [
+                [{x: 650, y: 200}, {x: 750, y: 200}, {x: 750, y: 250}, {x: 650, y: 250}],
+                [{x: 150, y: 200}, {x: 250, y: 200}, {x: 250, y: 250}, {x: 150, y: 250}],
+                [{x: 400, y: 450}, {x: 500, y: 450}, {x: 500, y: 520}, {x: 400, y: 520}],
+                [{x: 700, y: 300}, {x: 740, y: 300}, {x: 740, y: 400}, {x: 700, y: 400}],
+                [{x: 160, y: 300}, {x: 200, y: 300}, {x: 200, y: 400}, {x: 160, y: 400}],
+                [{x: 400, y: 530}, {x: 500, y: 530}, {x: 500, y: 550}, {x: 400, y: 550}],
+                [{x: 350, y: 600}, {x: 450, y: 600}, {x: 550, y: 600}, {x: 450, y: 620}],
+                [{x: 220, y: 50}, {x: 320, y: 50}, {x: 320, y: 80}, {x: 220, y: 80}],
+                [{x: 450, y: 300}, {x: 550, y: 300}, {x: 550, y: 370}, {x: 450, y: 370}]
+            ];
+            
+            // Create guards
+            guards = guardPaths.map((path, i) => {
+                const viewDistance = i < 2 ? 120 : i === 8 ? 130 : 100;
+                const speed = (i === 8 ? 1.0 : 0.8) * 1.25;
+                
+                return new Character(
+                    path[0].x,
+                    path[0].y,
+                    25,
+                    (i === 8) ? '#990000' : 'red',
+                    speed,
+                    'guard',
+                    path,
+                    viewDistance
+                );
+            });
+            
+            // Define exit zones
+            exitZone = {x: 250, y: 0, width: 70, height: 20};
+            escapeZone = {x: canvas.width - 100, y: canvas.height - 100, width: 80, height: 80};
+            
+            // Reset game state
+            gameOver = false;
+            gameWon = false;
+            mouseX = canvas.width / 2;
+            mouseY = canvas.height / 2;
+        }
+
+        // Game loop
+        function update() {
+            if (gameOver || gameWon) return;
+            
+            // Player movement
+            let dx = 0, dy = 0;
+            if (keys['ArrowUp'] || keys['w'] || keys['W']) dy = -1;
+            if (keys['ArrowDown'] || keys['s'] || keys['S']) dy = 1;
+            if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1;
+            if (keys['ArrowRight'] || keys['d'] || keys['D']) dx = 1;
+            
+            player.move(dx, dy);
+            player.updateSuspicion();
+            
+            // Update guards
+            for (const guard of guards) {
+                guard.update();
+                
+                // Check if guard can see player
+                if (guard.alive && guard.canSee(player)) {
+                    player.suspicionLevel += 1.5;
+                    player.health -= 50; // Danno aumentato
+                    
+                    if (player.health <= 0 || player.suspicionLevel >= 100) {
+                        gameOver = true;
+                    }
+                }
+            }
+            
+            // Check win condition
+            if (!king.alive && !queen.alive) {
+                // Check if at exit
+                const atExit = (
+                    player.x > exitZone.x && 
+                    player.x < exitZone.x + exitZone.width && 
+                    player.y < exitZone.y + exitZone.height
+                );
+                
+                // Check if at escape zone
+                const atEscape = (
+                    player.x > escapeZone.x && 
+                    player.x < escapeZone.x + escapeZone.width && 
+                    player.y > escapeZone.y && 
+                    player.y < escapeZone.y + escapeZone.height
+                );
+                
+                if (atExit || atEscape) {
+                    gameWon = true;
+                    player.escaped = true;
+                }
+            }
+        }
+
+        function drawUI() {
+            // Draw UI elements
+            ctx.fillStyle = 'black';
+            ctx.font = '16px Arial';
+            ctx.fillText('Frecce: ' + player.arrows, 20, 30);
+            
+            // Draw suspicion meter
+            ctx.fillStyle = 'black';
+            ctx.fillRect(20, 50, 200, 20);
+            ctx.fillStyle = `rgb(${player.suspicionLevel * 2.55}, 0, 0)`;
+            ctx.fillRect(20, 50, player.suspicionLevel * 2, 20);
+            ctx.fillStyle = 'white';
+            ctx.fillText('Sospetto', 90, 65);
+            
+            // Draw health bar
+            ctx.fillStyle = 'black';
+            ctx.fillRect(canvas.width - 220, 20, 200, 20);
+            ctx.fillStyle = `rgb(0, ${player.health * 2.55}, 0)`;
+            ctx.fillRect(canvas.width - 220, 20, player.health * 2, 20);
+            ctx.fillStyle = 'white';
+            ctx.fillText('Vita', canvas.width - 150, 35);
+        }
+        
+        function drawGameState() {
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'red';
+                ctx.font = '40px Arial';
+                ctx.fillText('SEI STATO CATTURATO!', canvas.width/2 - 240, canvas.height/2);
+                ctx.font = '20px Arial';
+                ctx.fillText('Clicca per ricominciare', canvas.width/2 - 120, canvas.height/2 + 40);
+            } else if (gameWon) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'green';
+                ctx.font = '40px Arial';
+                ctx.fillText('MISSIONE COMPLETATA!', canvas.width/2 - 240, canvas.height/2);
+                ctx.font = '20px Arial';
+                ctx.fillText('Clicca per ricominciare', canvas.width/2 - 120, canvas.height/2 + 40);
+            }
+        }
+
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw map elements
+            walls.forEach(wall => wall.draw());
+            doors.forEach(door => door.draw());
+            
+            // Draw characters
+            king.draw();
+            queen.draw();
+            guards.forEach(guard => guard.draw());
+            player.draw();
+            
+            // Draw UI elements
+            drawUI();
+            drawGameState();
+        }
+
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            
+            // Shoot arrows with spacebar
+            if (e.key === ' ' && !gameOver && !gameWon) {
+                player.shootArrow();
+            }
+            
+            // Assassinate royalty with E key
+            if ((e.key === 'e' || e.key === 'E') && !gameOver && !gameWon) {
+                if (player.canAssassinate(king)) {
+                    player.assassinate(king);
+                } else if (player.canAssassinate(queen)) {
+                    player.assassinate(queen);
+                }
+            }
+            
+            // Prevent default for game controls
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 
+                 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D', ' ', 'e', 'E'].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('click', () => {
+            if (gameOver || gameWon) {
+                initGame();
+            }
+        });
+
+        // Initialize and start the game
+        initGame();
+        gameLoop();
+    </script>
+
+
+</body></html>
