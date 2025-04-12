@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- saved from url=(0065)file:///C:/Users/Utente/Downloads/simplified-game-code%20(1).html -->
 <html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
-    <title>Assassinio Reale by Andrea della Peruta</title>
+    <title>Assassinio Reale</title>
     <style>
         body {
             display: flex;
@@ -169,10 +169,11 @@
         }
 
         // Player class
+        // In the Player class constructor, reduce initial arrows from 5 to 3
         class Player extends Character {
             constructor(x, y) {
                 super(x, y, 20, 'blue', 5);
-                this.arrows = 5;
+                this.arrows = 3; // Reduced from 5
                 this.suspicionLevel = 0;
                 this.health = 100;
                 this.escaped = false;
@@ -418,7 +419,9 @@
             queen = new Character(200, 200, 30, 'pink', 0, 'queen');
             
             // Guard patrol paths
+            // Add more guard patrol paths
             const guardPaths = [
+                // Existing paths
                 [{x: 650, y: 200}, {x: 750, y: 200}, {x: 750, y: 250}, {x: 650, y: 250}],
                 [{x: 150, y: 200}, {x: 250, y: 200}, {x: 250, y: 250}, {x: 150, y: 250}],
                 [{x: 400, y: 450}, {x: 500, y: 450}, {x: 500, y: 520}, {x: 400, y: 520}],
@@ -427,13 +430,18 @@
                 [{x: 400, y: 530}, {x: 500, y: 530}, {x: 500, y: 550}, {x: 400, y: 550}],
                 [{x: 350, y: 600}, {x: 450, y: 600}, {x: 550, y: 600}, {x: 450, y: 620}],
                 [{x: 220, y: 50}, {x: 320, y: 50}, {x: 320, y: 80}, {x: 220, y: 80}],
-                [{x: 450, y: 300}, {x: 550, y: 300}, {x: 550, y: 370}, {x: 450, y: 370}]
+                [{x: 450, y: 300}, {x: 550, y: 300}, {x: 550, y: 370}, {x: 450, y: 370}],
+                // New guard paths
+                [{x: 300, y: 150}, {x: 300, y: 250}, {x: 350, y: 200}, {x: 250, y: 200}],
+                [{x: 600, y: 150}, {x: 600, y: 250}, {x: 650, y: 200}, {x: 550, y: 200}],
+                [{x: 450, y: 100}, {x: 450, y: 200}, {x: 500, y: 150}, {x: 400, y: 150}]
             ];
             
-            // Create guards
+            // Create guards with 50% increased speed
             guards = guardPaths.map((path, i) => {
                 const viewDistance = i < 2 ? 120 : i === 8 ? 130 : 100;
-                const speed = (i === 8 ? 1.0 : 0.8) * 1.25;
+                const baseSpeed = (i === 8 ? 1.0 : 0.8);
+                const speed = baseSpeed * 1.875; // Increased by 50% (1.25 * 1.5 = 1.875)
                 
                 return new Character(
                     path[0].x,
