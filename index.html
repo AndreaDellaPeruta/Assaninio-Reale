@@ -213,6 +213,24 @@
                 ctx.arc(mouseX, mouseY, 3, 0, Math.PI*2);
                 ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
                 ctx.fill();
+
+                // Draw health bar
+                const healthBarWidth = 50;
+                const healthBarHeight = 5;
+                const healthPercentage = this.health / 100;
+                
+                // Background
+                ctx.fillStyle = 'red';
+                ctx.fillRect(this.x - healthBarWidth/2, this.y - this.size, healthBarWidth, healthBarHeight);
+                
+                // Health remaining
+                ctx.fillStyle = 'green';
+                ctx.fillRect(this.x - healthBarWidth/2, this.y - this.size, healthBarWidth * healthPercentage, healthBarHeight);
+
+                // Draw arrow count
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.fillText(`Arrows: ${this.arrows}`, this.x - 20, this.y - this.size - 5);
             }
 
             move(dx, dy) {
@@ -257,10 +275,9 @@
                 let arrowX = this.x;
                 let arrowY = this.y;
                 const maxDistance = 300;
-                
-                for (let i = 0; i < 20; i++) {
-                    arrowX += dirX * (maxDistance/20);
-                    arrowY += dirY * (maxDistance/20);
+                                for (let i = 0; i < 20; i++) {
+                    arrowX += dirX * (maxDistance/20 * 1.25); // Aumentata velocità del 25%
+                    arrowY += dirY * (maxDistance/20 * 1.25); // Aumentata velocità del 25%
                     
                     // Check if hits a guard
                     for (const guard of guards) {
@@ -495,8 +512,12 @@
                 }
             }
             
-            // Check win condition
+
+            // Check win condition and reveal secret exit
             if (!king.alive && !queen.alive) {
+                // Reveal secret exit by changing its color
+                walls.find(w => w.name === 'EXIT').color = 'rgba(0, 255, 0, 0.5)';
+                
                 // Check if at exit
                 const atExit = (
                     player.x > exitZone.x && 
@@ -520,6 +541,56 @@
         }
 
         function drawUI() {
+            // Draw suspicion meter
+            const suspicionWidth = 200;
+            const suspicionHeight = 20;
+            const suspicionX = canvas.width - suspicionWidth - 20;
+            const suspicionY = 20;
+            
+            // Background
+            ctx.fillStyle = '#ddd';
+            ctx.fillRect(suspicionX, suspicionY, suspicionWidth, suspicionHeight);
+            
+            // Suspicion level
+            ctx.fillStyle = `rgb(${255 * (player.suspicionLevel/100)}, 0, 0)`;
+            ctx.fillRect(suspicionX, suspicionY, suspicionWidth * (player.suspicionLevel/100), suspicionHeight);
+            
+            // Border
+            ctx.strokeStyle = '#000';
+            ctx.strokeRect(suspicionX, suspicionY, suspicionWidth, suspicionHeight);
+            
+            // Label
+            ctx.fillStyle = '#000';
+            ctx.font = '14px Arial';
+            ctx.fillText('Suspicion', suspicionX, suspicionY - 5);
+            
+            // Draw health bar
+            const healthWidth = 200;
+            const healthHeight = 20;
+            const healthX = 20;
+            const healthY = 20;
+            
+            // Background
+            ctx.fillStyle = '#ddd';
+            ctx.fillRect(healthX, healthY, healthWidth, healthHeight);
+            
+            // Health level
+            ctx.fillStyle = `rgb(0, ${255 * (player.health/100)}, 0)`;
+            ctx.fillRect(healthX, healthY, healthWidth * (player.health/100), healthHeight);
+            
+            // Border
+            ctx.strokeStyle = '#000';
+            ctx.strokeRect(healthX, healthY, healthWidth, healthHeight);
+            
+            // Label
+            ctx.fillStyle = '#000';
+            ctx.font = '14px Arial';
+            ctx.fillText('Health', healthX, healthY - 5);
+            
+            // Draw arrow count
+            ctx.fillStyle = '#000';
+            ctx.font = '14px Arial';
+            ctx.fillText(`Arrows: ${player.arrows}`, healthX, healthY + 40);
             // Draw UI elements
             ctx.fillStyle = 'black';
             ctx.font = '16px Arial';
@@ -615,6 +686,14 @@
 
         document.addEventListener('keyup', (e) => {
             keys[e.key] = false;
+        });
+
+        // Add space key for shooting arrows
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !gameOver && !gameWon) {
+                player.shootArrow();
+                e.preventDefault();
+            }
         });
 
         canvas.addEventListener('mousemove', (e) => {
